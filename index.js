@@ -26,8 +26,15 @@ const { formidable } = require('formidable');  // formidable v3 用 named import
  *   // { uploadDir: '/tmp/uploads', maxFileSize: 10485760, gymName: 'FitClub' }
  */
 function getUploadConfig() {
-  // TODO: 實作此函式
-  // 提示：用 || 給預設值；MAX_FILE_SIZE_MB 是字串，記得先 Number() 轉型再換算 bytes
+  const uploadDir = process.env.UPLOAD_DIR || '/tmp';
+  const maxFileSizeMB = Number(process.env.MAX_FILE_SIZE_MB || 5);
+  const gymName = process.env.GYM_NAME|| '未命名健身房';
+
+  return {
+    uploadDir,
+    maxFileSize: maxFileSizeMB * 1024 * 1024,
+    gymName
+  };
 }
 
 // ========== 任務二：取副檔名 ==========
@@ -49,8 +56,11 @@ function getUploadConfig() {
  *   getFileExtension('README');      // ''
  */
 function getFileExtension(filename) {
-  // TODO: 實作此函式
-  // 提示：用 lastIndexOf('.') 找最後一個 .，toLowerCase() 轉小寫
+  const dotIndex = filename.lastIndexOf('.');
+  if (dotIndex === -1) {
+    return '';
+  }
+  return filename.slice(dotIndex).toLowerCase();
 }
 
 // ========== 任務三：解析檔案 metadata ==========
@@ -74,8 +84,10 @@ function getFileExtension(filename) {
  *   // { filename: 'leo.jpg', sizeKB: 244, ext: '.jpg' }
  */
 function parseFileMetadata(file) {
-  // TODO: 實作此函式
-  // 提示：呼叫 getFileExtension 取副檔名，Math.round(size / 1024) 算 KB
+  const filename = file.originalFilename;
+  const sizeKB = Math.round(file.size / 1024);
+  const ext = getFileExtension(file.originalFilename);
+  return { filename, sizeKB, ext };
 }
 
 // ========== 任務四：產出 upload log 字串 ==========
@@ -96,8 +108,12 @@ function parseFileMetadata(file) {
  *   // '[FitClub] Uploaded leo.jpg (245 KB) → /tmp/uploads'
  */
 function formatUploadLog(meta, config) {
-  // TODO: 實作此函式
-  // 提示：用 template literal 組字串
+  const filename = meta.filename;
+  const sizeKB = meta.sizeKB;
+  const gymName = config.gymName;
+  const uploadDir = config.uploadDir;
+
+  return `[${gymName}] Uploaded ${filename} (${sizeKB} KB) → ${uploadDir}`;
 }
 
 // ========== 任務五：路由分派 ==========
@@ -126,15 +142,56 @@ function formatUploadLog(meta, config) {
  *   http.createServer((req, res) => router(req, res, config))
  */
 function router(req, res, config) {
-  // TODO: 實作此函式
-  // 建議（非強制）：
-  //   - 拆出 handleUpload(req, res, config)：formidable 解析邏輯
-  //   - 拆出 handleNotFound(req, res)：404 邏輯
-  //   - router 只看 method + url、呼叫對應 handler
-  // formidable 錯誤處理要點：
-  //   - 超過 maxFileSize 時 formidable v3 發 'error' event，要用 form.on('error', ...) 接
-  //   - 同時 form.parse 的 callback err 也要處理
-  //   - 避免重複 res.writeHead（檢查 res.headersSent）
+  function sendJson(statusCode, data) {
+    if (res.headersSent) {
+      return;
+    }
+
+    res.writeHead(statusCode, {
+      'Content-Type': 'application/json'
+    });
+
+    res.end(JSON.stringify(data));
+  }
+
+  if (req.method === 'POST' && req.url === '/coaches/avatar') {
+    const form = formidable({
+      uploadDir: config.uploadDir,
+      maxFileSize: config.maxFileSize,
+      keepExtensions: true
+    });
+
+    form.on('error', err => {
+      sendJson(500, { error: err.message });
+    });
+
+    form.parse(req, (err, fields, files) => {
+      if (err) {
+        sendJson(500, { error: err.message });
+        return;
+      }
+
+      const file = Array.isArray(files.file) ? files.file[0] : files.file;
+
+      if (!file) {
+        sendJson(400, { error: 'No file uploaded' });
+        return;
+      }
+
+      const meta = parseFileMetadata(file);
+
+      sendJson(200, {
+        filename: meta.filename,
+        sizeKB: meta.sizeKB,
+        ext: meta.ext,
+        savedPath: file.filepath
+      });
+    });
+
+    return;
+  }
+
+  sendJson(404, { error: 'Not Found' });
 }
 
 // ========== 任務六：建立上傳 server ==========
@@ -154,8 +211,15 @@ function router(req, res, config) {
  *   server.listen(3000);  // ← 這行由 app.js 呼叫
  */
 function createUploadServer(config) {
-  // TODO: 實作此函式
-  // 提示：主邏輯都在 router 裡，這邊函式內容不多
+  if (!fs.existsSync(config.uploadDir)) {
+    fs.mkdirSync(config.uploadDir, { recursive: true });
+  }
+
+  const server = http.createServer((req, res) => {
+    router(req, res, config);
+  });
+
+  return server;
 }
 
 module.exports = {
